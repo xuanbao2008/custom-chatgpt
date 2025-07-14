@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Custom ChatGPT Bot</title>
+</head>
+<body>
+  <h2>Upload Document</h2>
+  <form id="upload-form" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".pdf,.docx,.txt" required />
+    <button type="submit">Upload</button>
+    <span id="upload-status"></span>
+  </form>
+
+  <h2>Chat with Bot</h2>
+  <div id="chat-log" style="height:300px; overflow:auto; border:1px solid #ccc;"></div>
+  <form id="chat-form">
+    <input type="text" name="question" placeholder="Ask something…" required />
+    <button>Send</button>
+  </form>
+
+  <script>
+    document.getElementById('upload-form').onsubmit = async e => {
+      e.preventDefault();
+      const file = e.target.file.files[0];
+      const status = document.getElementById('upload-status');
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      status.textContent = 'Uploading…';
+      try {
+        const res = await fetch('/upload', { method: 'POST', body: formData });
+        const json = await res.json();
+        status.textContent = json.message || json.error;
+      } catch {
+        status.textContent = 'Upload failed';
+      }
+    };
+
+    document.getElementById('chat-form').onsubmit = async e => {
+      e.preventDefault();
+      const input = e.target.question;
+      const q = input.value.trim();
+      if (!q) return;
+      addMessage('user', q);
+      input.value = '';
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q })
+        });
+        const json = await res.json();
+        addMessage('bot', json.answer || json.error);
+      } catch {
+        addMessage('bot', 'Error contacting server');
+      }
+    };
+
+    function addMessage(role, text) {
+      const div = document.createElement('div');
+      div.className = role;
+      div.textContent = text;
+      document.getElementById('chat-log').appendChild(div);
+    }
+  </script>
+</body>
+</html>
