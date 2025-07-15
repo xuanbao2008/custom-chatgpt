@@ -1,5 +1,6 @@
 import fs from 'fs';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import WordExtractor from 'word-extractor';
 import mammoth from 'mammoth';
 
 export async function extractTextFromFile(filePath, ext) {
@@ -10,6 +11,11 @@ export async function extractTextFromFile(filePath, ext) {
     const data = await pdfParse(buffer);
     return data.text;
   }
+  if (ext === 'doc') {
+    const extractor = new WordExtractor();
+    const doc = await extractor.extract(filePath);
+    return doc.getBody();
+  }
   if (ext === 'docx') {
     const buffer = fs.readFileSync(filePath);
     const result = await mammoth.extractRawText({ buffer });
@@ -19,5 +25,5 @@ export async function extractTextFromFile(filePath, ext) {
     return fs.readFileSync(filePath, 'utf8');
   }
 
-  throw new Error('Unsupported file type — only .pdf, .docx, .txt allowed');
+  throw new Error('Unsupported file type — only .pdf, doc, .docx, .txt allowed');
 }

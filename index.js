@@ -1,78 +1,80 @@
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 dotenv.config();
 
-import express from 'express';
-import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
-import bodyParser from 'body-parser';
-import { extractTextFromFile } from './extractors.js';
-import { chunkText } from './chunker.js';
-import { embedAndStoreChunks, embedQueryAndSearch, answerWithGPT } from './embedder.js';
+import express from "express";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
+import bodyParser from "body-parser";
+import { v4 as uuidv4 } from "uuid";
+
+import {
+  ensureCollection,
+  embedAndStoreChunks,
+  answerWithRagAndFallback
+} from "./embedder.js";
+import { extractTextFromFile } from "./extractors.js";
+import { chunkText } from "./chunker.js";
 
 const app = express();
-const docsDir = './docs';
+const docsDir = "./docs";
 if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir);
 
-app.use(express.static('public'));
+await ensureCollection();
 
-// Multer storage: keeps original name & extension
+app.use(express.static("public"));
+app.use(bodyParser.json());
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, docsDir),
-  filename: (req, file, cb) => {
-    const original = file.originalname;
-    cb(null, original);
-  }
+  destination: (_req, _file, cb) => cb(null, docsDir),
+  filename: (_req, file, cb) => cb(null, file.originalname)
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 } // 50 MB limit
+  limits: { fileSize: 50 * 1024 * 1024 } // 50 MB
 });
 
-app.post('/upload', (req, res) => {
+app.post("/upload-multiple", (req, res) => {
   req.setTimeout(0);
-  upload.single('file')(req, res, async err => {
-    if (err instanceof multer.MulterError) {
-      return res.status(400).json({ error: 'Multer error: ' + err.message });
-    }
-    if (err) {
-      return res.status(500).json({ error: 'Upload failed: ' + err.message });
-    }
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+  upload.array("files")(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.files?.length) return res.status(400).json({ error: "No files uploaded" });
+
+    let totalChunks = 0;
+    for (const file of req.files) {
+      const ext = path.extname(file.originalname).slice(1);
+      try {
+        const text = await extractTextFromFile(
+          path.join(docsDir, file.originalname),
+          ext
+        );
+        const chunks = chunkText(text);
+        await embedAndStoreChunks(chunks, { source: file.originalname });
+        totalChunks += chunks.length;
+      } catch (e) {
+        console.error(`Error processing ${file.originalname}:`, e);
+      }
     }
 
-    const { path: filePath, originalname } = req.file;
-    console.log('Saved file as:', originalname);
-
-    const ext = path.extname(originalname).slice(1); // e.g. "pdf"
-
-    try {
-      const text = await extractTextFromFile(filePath, ext);
-      const chunks = chunkText(text);
-      await embedAndStoreChunks(chunks, { source: originalname });
-      return res.json({ message: `${originalname} uploaded & embedded.` });
-    } catch (e) {
-      console.error('Processing error:', e);
-      return res.status(500).json({ error: 'Processing error: ' + e.message });
-    }
+    res.json({
+      message: `Uploaded and embedded ${req.files.length} files (~${totalChunks} chunks).`
+    });
   });
 });
 
-app.use(bodyParser.json());
+app.post("/chat", async (req, res) => {
+  const { question, sessionId } = req.body;
+  if (!question?.trim()) return res.status(400).json({ error: "Question is required." });
 
-app.post('/chat', async (req, res) => {
   try {
-    const { question } = req.body;
-    if (!question) return res.status(400).json({ error: 'Question is required' });
-    const context = await embedQueryAndSearch(question);
-    const answer = await answerWithGPT(question, context);
-    return res.json({ answer });
+    const sid = sessionId || uuidv4();
+    const { answer, source } = await answerWithRagAndFallback(sid, question);
+    res.json({ answer, source, sessionId: sid });
   } catch (e) {
-    console.error('Chat error:', e);
-    return res.status(500).json({ error: 'Chat error: ' + e.message });
+    console.error("Chat Error:", e);
+    res.status(500).json({ error: "Internal error: " + e.message });
   }
 });
 
-app.listen(3000, () => console.log('Server running on http://localhost:3000'));
+app.listen(3000, () => console.log("Chatbot server running at http://localhost:3000"));
