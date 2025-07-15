@@ -25,15 +25,25 @@ async function ensureCollection() {
 await ensureCollection();
 
 export async function embedAndStoreChunks(chunks, { source }) {
+  // Sanitize chunks: remove empty or invalid strings
+  const sanitized = chunks
+    .map(c => typeof c === 'string' ? c.trim() : '')
+    .filter(c => c.length > 0);
+
+  if (sanitized.length === 0) {
+    console.warn(`⚠️ No valid chunks to embed for source: ${source}`);
+    return;
+  }
+
   const embeddingRes = await openai.embeddings.create({
     model: 'text-embedding-3-small',
-    input: chunks
+    input: sanitized
   });
 
   const points = embeddingRes.data.map((e, i) => ({
     id: uuidv4(),
     vector: e.embedding,
-    payload: { text: chunks[i], source }
+    payload: { text: sanitized[i], source }
   }));
 
   await qdrant.upsert(COLLECTION, { points });
@@ -41,9 +51,15 @@ export async function embedAndStoreChunks(chunks, { source }) {
 }
 
 export async function embedQueryAndSearch(question, topK = 5) {
+  const sanitized = question.trim();
+  if (!sanitized) {
+    console.warn('⚠️ Empty question for query embedding; skipping.');
+    return [];
+  }
+
   const queryRes = await openai.embeddings.create({
     model: 'text-embedding-3-small',
-    input: [question]
+    input: [sanitized]
   });
 
   const search = await qdrant.search(COLLECTION, {
