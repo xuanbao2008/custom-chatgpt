@@ -18,3 +18,5 @@ docker-compose up --build
 
 4. To-do:
 - Force chatbot to answer regardless language used in questions, sometimes it only responses to language used in provided docs
+- Fix PDF parsing for malformat PDF
+- Enhance and balance between uploaded RAG vs general GPT knowledge
